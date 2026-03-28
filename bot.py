@@ -50,7 +50,7 @@ def call_api(prompt, max_tokens=2000, use_search=False):
             response = client.messages.create(
                 model="claude-haiku-4-5-20251001",
                 max_tokens=max_tokens,
-                tools=tools if tools else None,
+                tools=tools if tools else anthropic.NOT_GIVEN,
                 messages=[{"role": "user", "content": prompt}]
             )
             return "".join(b.text for b in response.content if hasattr(b, "text") and b.text)
