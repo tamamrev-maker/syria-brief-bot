@@ -25,6 +25,25 @@ log = logging.getLogger(__name__)
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 
+def clean_json(text):
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    text = re.sub(r'([{,])\s*}', r'\1}', text)
+    return text
+
+
+def safe_parse(raw):
+    match = re.search(r'\{[\s\S]*\}', raw)
+    if not match:
+        raise ValueError("No JSON found")
+    json_str = match.group()
+    try:
+        return json.loads(json_str)
+    except Exception:
+        json_str = clean_json(json_str)
+        return json.loads(json_str)
+
+
 def generate_brief(country=None):
     country = country or COUNTRY
     now = datetime.now(pytz.timezone(TIMEZONE))
@@ -33,37 +52,23 @@ def generate_brief(country=None):
     day_month = now.strftime("%B %d")
 
     prompt = (
-        "You are an Arabic editorial director. Today is " + today_str + " and the current time is " + time_str + " Damascus time.\n\n"
-        "TASK 1 - BREAKING NEWS: Search the web RIGHT NOW for " + country + " news published in the last 12 hours only (after " + today_str + " minus 12 hours). "
-        "If you find news older than 12 hours, DO NOT include it. Mark each item with exact publish time if available. "
-        "Prioritize: breaking news, official statements, military developments, economic news.\n\n"
-        "TASK 2 - ON THIS DAY: Search for historical events on " + day_month + " in Syrian history:\n"
-        "- At least 2 events from Syrian history before 2011 (political, cultural, military milestones)\n"
-        "- At least 3 events from the Syrian revolution period (March 15 2011 to December 8 2024): battles, protests, political decisions, humanitarian milestones\n\n"
-        "Return ONLY valid JSON:\n"
+        "You are an Arabic editorial director. Today is " + today_str + " time " + time_str + " Damascus.\n\n"
+        "TASK 1: Search for " + country + " breaking news from the LAST 12 HOURS ONLY. Skip older news.\n\n"
+        "TASK 2: Search for historical events on " + day_month + " in Syrian history:\n"
+        "- 2 events before 2011\n"
+        "- 3 events from Syrian revolution 2011-2024\n\n"
+        "Respond with ONLY this JSON structure. Use simple Arabic text, no special formatting inside strings:\n"
         "{\n"
-        "  \"summary\": \"2-sentence Arabic overview of today breaking news\",\n"
-        "  \"items\": [\n"
-        "    {\n"
-        "      \"title\": \"Arabic headline\",\n"
-        "      \"type\": \"news\",\n"
-        "      \"summary\": \"2-sentence Arabic summary\",\n"
-        "      \"angle\": \"editorial angle in Arabic\",\n"
-        "      \"publishedAt\": \"e.g. today 14:30 or 3 hours ago\",\n"
-        "      \"content_ideas\": {\n"
-        "        \"carousel\": \"carousel post idea in Arabic\",\n"
-        "        \"video\": \"short video idea in Arabic\",\n"
-        "        \"thread\": \"Twitter thread idea in Arabic\"\n"
-        "      }\n"
-        "    }\n"
-        "  ],\n"
-        "  \"trends\": [\"trend1\", \"trend2\", \"trend3\", \"trend4\", \"trend5\"],\n"
-        "  \"on_this_day\": [\n"
-        "    {\"year\": \"1963\", \"event\": \"Arabic description of historical event\", \"era\": \"pre2011\"},\n"
-        "    {\"year\": \"2011\", \"event\": \"Arabic description of revolution event\", \"era\": \"revolution\"}\n"
-        "  ]\n"
+        "\"summary\": \"overview in Arabic\",\n"
+        "\"items\": [\n"
+        "{\"title\": \"headline\", \"type\": \"news\", \"summary\": \"summary\", \"angle\": \"angle\", \"publishedAt\": \"time\", \"carousel\": \"idea\", \"video\": \"idea\", \"thread\": \"idea\"}\n"
+        "],\n"
+        "\"trends\": [\"t1\", \"t2\", \"t3\", \"t4\", \"t5\"],\n"
+        "\"on_this_day\": [\n"
+        "{\"year\": \"1963\", \"event\": \"event description\", \"era\": \"pre2011\"}\n"
+        "]\n"
         "}\n"
-        "Include 4-5 items. Use double quotes only. Write Arabic content in Arabic script."
+        "Include 4-5 items and 5 on_this_day events. No newlines inside string values."
     )
 
     response = client.messages.create(
@@ -78,10 +83,7 @@ def generate_brief(country=None):
         if hasattr(block, "text") and isinstance(block.text, str):
             raw += block.text
 
-    match = re.search(r'\{[\s\S]*\}', raw)
-    if not match:
-        raise ValueError("No JSON returned")
-    return json.loads(match.group())
+    return safe_parse(raw)
 
 
 def esc(text):
@@ -114,16 +116,12 @@ def format_brief(data, country=None):
             "📰 *" + str(i) + "\\. " + esc(item.get("title", "")) + "*" + time_tag,
             esc(item.get("summary", "")),
             "↳ _" + esc(item.get("angle", "")) + "_",
+            "",
+            "*افكار المحتوى:*",
+            "🎠 " + esc(item.get("carousel", "")),
+            "🎬 " + esc(item.get("video", "")),
+            "🧵 " + esc(item.get("thread", "")),
         ]
-        ideas = item.get("content_ideas", {})
-        if ideas:
-            lines += [
-                "",
-                "*افكار المحتوى:*",
-                "🎠 " + esc(ideas.get("carousel", "")),
-                "🎬 " + esc(ideas.get("video", "")),
-                "🧵 " + esc(ideas.get("thread", "")),
-            ]
 
     trends = data.get("trends", [])
     if trends:
@@ -135,22 +133,23 @@ def format_brief(data, country=None):
         ]
 
     on_this_day = data.get("on_this_day", [])
-    if on_this_day:
-        lines += [
-            "",
-            "━━━━━━━━━━━━━━━━━━━━",
-            "*في مثل هذا اليوم:*",
-            "",
-            "🏛 *تاريخ سوريا:*",
-        ]
-        for ev in on_this_day:
-            if ev.get("era") == "pre2011":
-                lines.append("• " + esc(ev.get("year", "")) + " — " + esc(ev.get("event", "")))
+    pre = [e for e in on_this_day if e.get("era") == "pre2011"]
+    rev = [e for e in on_this_day if e.get("era") == "revolution"]
 
-        lines += ["", "🔴 *الثورة السورية \\(2011\\-2024\\):*"]
-        for ev in on_this_day:
-            if ev.get("era") == "revolution":
-                lines.append("• " + esc(ev.get("year", "")) + " — " + esc(ev.get("event", "")))
+    if pre or rev:
+        lines += ["", "━━━━━━━━━━━━━━━━━━━━", "*في مثل هذا اليوم:*"]
+
+    if pre:
+        lines.append("")
+        lines.append("🏛 *تاريخ سوريا:*")
+        for ev in pre:
+            lines.append("• " + esc(ev.get("year", "")) + " — " + esc(ev.get("event", "")))
+
+    if rev:
+        lines.append("")
+        lines.append("🔴 *الثورة السورية:*")
+        for ev in rev:
+            lines.append("• " + esc(ev.get("year", "")) + " — " + esc(ev.get("event", "")))
 
     lines += ["", "━━━━━━━━━━━━━━━━━━━━", "🤖 _اخبار اخر 12 ساعة فقط_"]
     return "\n".join(lines)
