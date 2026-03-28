@@ -52,68 +52,32 @@ def generate_brief(country=None):
     prompt = (
         "You are an Arabic editorial director specialized in Syrian affairs. "
         "Today is " + today_str + " at " + time_str + " Damascus time.\n\n"
-
         "CRITICAL: Return ONLY plain Arabic text in JSON strings. NO citations, NO [1], NO source tags.\n\n"
-
-        "YOU MUST DO MULTIPLE SEPARATE WEB SEARCHES covering ALL these categories:\n\n"
-
-        "1. SECURITY & MILITARY: Search 'سوريا امن اليوم', 'Syria security today', "
-        "'اشتباكات سوريا', 'مظاهرات سوريا اليوم', 'احتجاجات سوريا', 'Syria military news'\n\n"
-
-        "2. POLITICS & GOVERNMENT: Search 'الحكومة السورية اليوم', 'Syria government news', "
-        "'وزارات سوريا', 'Syria diplomacy today', 'سوريا قرارات رسمية'\n\n"
-
-        "3. ALL 14 SYRIAN GOVERNORATES - search each one separately:\n"
-        "   - 'دمشق اليوم' and 'Damascus today'\n"
-        "   - 'ريف دمشق اليوم'\n"
-        "   - 'حلب اليوم' and 'Aleppo today'\n"
-        "   - 'حمص اليوم' and 'Homs today'\n"
-        "   - 'حماه اليوم' and 'Hama today'\n"
-        "   - 'اللاذقية اليوم' and 'Latakia today'\n"
-        "   - 'طرطوس اليوم' and 'Tartus today'\n"
-        "   - 'إدلب اليوم' and 'Idlib today'\n"
-        "   - 'درعا اليوم' and 'Daraa today'\n"
-        "   - 'السويداء اليوم' and 'Sweida today'\n"
-        "   - 'القنيطرة اليوم' and 'Quneitra today'\n"
-        "   - 'دير الزور اليوم' and 'Deir ez-Zor today'\n"
-        "   - 'الرقة اليوم' and 'Raqqa today'\n"
-        "   - 'الحسكة اليوم' and 'Hasakah today'\n\n"
-
-        "4. COMMUNITIES & MINORITIES: Search 'مسيحيو سوريا اليوم', 'اكراد سوريا', "
-        "'دروز سوريا', 'ازيديون سوريا', 'علويون سوريا', 'اسماعيليون سوريا', "
-        "'تركمان سوريا', 'Syria minorities news today'\n\n"
-
-        "5. ECONOMY: Search 'اقتصاد سوريا اليوم', 'سعر الدولار سوريا', "
-        "'اسعار سوريا', 'Syria economy today'\n\n"
-
-        "6. SOCIAL TRENDS: Search what Syrians discuss on Twitter/X in Arabic today, "
-        "Syrian Facebook groups latest, Syrian news sites trending\n\n"
-
-        "7. ON THIS DAY (" + day_month + "): Search Syrian history on this date "
-        "before 2011 AND from Syrian revolution 2011-2024\n\n"
-
-        "After ALL searches compile into this JSON only:\n"
+        "DO MULTIPLE WEB SEARCHES covering ALL these categories:\n\n"
+        "1. SECURITY: 'سوريا امن اليوم', 'اشتباكات سوريا', 'مظاهرات سوريا اليوم'\n"
+        "2. POLITICS: 'الحكومة السورية اليوم', 'Syria government news today'\n"
+        "3. ALL 14 GOVERNORATES - search each: دمشق، ريف دمشق، حلب، حمص، حماه، اللاذقية، طرطوس، إدلب، درعا، السويداء، القنيطرة، دير الزور، الرقة، الحسكة\n"
+        "4. COMMUNITIES: مسيحيو سوريا، اكراد، دروز، ازيديون، علويون، تركمان\n"
+        "5. ECONOMY: 'اقتصاد سوريا اليوم', 'سعر الدولار سوريا'\n"
+        "6. TRENDS: what Syrians discuss on Twitter/X Arabic and Facebook today\n"
+        "7. ON THIS DAY " + day_month + ": Syrian history before 2011 and revolution 2011-2024\n\n"
+        "Return ONLY this JSON:\n"
         '{"summary":"2 sentence Arabic overview",'
         '"items":['
-        '{"title":"Arabic headline","type":"news","summary":"2 sentence summary","angle":"editorial angle",'
-        '"publishedAt":"HH:MM or X hours ago","source":"site name","governorate":"اسم المحافظة or national",'
-        '"carousel":"carousel idea","video":"video idea","thread":"thread idea"}'
+        '{"title":"headline","summary":"1 sentence","angle":"angle","publishedAt":"time","source":"site","governorate":"محافظة",'
+        '"carousel":"idea","video":"idea","thread":"idea"}'
         '],'
         '"trends":['
-        '{"text":"trend","platform":"Twitter or Facebook or news","reason":"why trending"}'
+        '{"text":"trend","platform":"Twitter or Facebook or news","reason":"reason"}'
         '],'
         '"on_this_day":['
-        '{"year":"1963","event":"Arabic description","era":"pre2011 or revolution"}'
+        '{"year":"1963","event":"description","era":"pre2011 or revolution"}'
         ']}\n\n'
-        "IMPORTANT:\n"
-        "- Include 8-12 news items covering as many governorates and topics as possible\n"
-        "- Each item must have a governorate field\n"
-        "- Do NOT skip any event even if local or small\n"
-        "- Include 6-8 trends\n"
-        "- Include 6-8 on_this_day events\n"
-        "- Only news from last 12 hours\n"
-        "- Write ALL Arabic in Arabic script\n"
-        "- Use double quotes only, no newlines inside strings"
+        "Rules:\n"
+        "- 8-10 items, summary must be SHORT (1 sentence max)\n"
+        "- 5 trends, 5 on_this_day\n"
+        "- Last 12 hours only\n"
+        "- No newlines inside strings, double quotes only"
     )
 
     response = client.messages.create(
@@ -138,6 +102,21 @@ def esc(text):
     return "".join(("\\" + c) if c in special else c for c in str(text))
 
 
+def split_messages(text, max_len=4000):
+    parts = []
+    while len(text) > max_len:
+        split_at = text.rfind("\n\n", 0, max_len)
+        if split_at == -1:
+            split_at = text.rfind("\n", 0, max_len)
+        if split_at == -1:
+            split_at = max_len
+        parts.append(text[:split_at])
+        text = text[split_at:].lstrip()
+    if text:
+        parts.append(text)
+    return parts
+
+
 def format_brief(data, country=None):
     country = country or COUNTRY
     now = datetime.now(pytz.timezone(TIMEZONE))
@@ -154,25 +133,27 @@ def format_brief(data, country=None):
     ]
 
     for i, item in enumerate(data.get("items", []), 1):
+        gov = item.get("governorate", "")
         published = item.get("publishedAt", "")
         source = item.get("source", "")
-        gov = item.get("governorate", "")
-        meta = ""
+        meta_parts = []
         if gov:
-            meta += " 📍" + esc(gov)
+            meta_parts.append("📍" + esc(gov))
         if published:
-            meta += " _\\(" + esc(published) + "\\)_"
+            meta_parts.append(esc(published))
         if source:
-            meta += " \\| _" + esc(source) + "_"
+            meta_parts.append(esc(source))
+        meta = " \\| ".join(meta_parts)
 
         lines += [
             "",
             "📰 *" + str(i) + "\\. " + esc(item.get("title", "")) + "*",
-            meta,
+        ]
+        if meta:
+            lines.append("_" + meta + "_")
+        lines += [
             esc(item.get("summary", "")),
             "↳ _" + esc(item.get("angle", "")) + "_",
-            "",
-            "*افكار المحتوى:*",
             "🎠 " + esc(item.get("carousel", "")),
             "🎬 " + esc(item.get("video", "")),
             "🧵 " + esc(item.get("thread", "")),
@@ -195,23 +176,35 @@ def format_brief(data, country=None):
 
     if pre or rev:
         lines += ["", "━━━━━━━━━━━━━━━━━━━━", "*في مثل هذا اليوم:*"]
-
     if pre:
         lines += ["", "🏛 *تاريخ سوريا:*"]
         for ev in pre:
             lines.append("• *" + esc(ev.get("year", "")) + "* — " + esc(ev.get("event", "")))
-
     if rev:
         lines += ["", "🔴 *الثورة السورية \\(2011\\-2024\\):*"]
         for ev in rev:
             lines.append("• *" + esc(ev.get("year", "")) + "* — " + esc(ev.get("event", "")))
 
-    lines += [
-        "",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "🤖 _بحث شامل 14 محافظة \\| اخبار اخر 12 ساعة_"
-    ]
+    lines += ["", "━━━━━━━━━━━━━━━━━━━━", "🤖 _بحث شامل 14 محافظة \\| اخر 12 ساعة_"]
     return "\n".join(lines)
+
+
+async def send_long(bot_or_msg, text, chat_id=None, is_edit=False):
+    parts = split_messages(text)
+    for idx, part in enumerate(parts):
+        try:
+            if is_edit and idx == 0:
+                await bot_or_msg.edit_text(part, parse_mode=ParseMode.MARKDOWN_V2)
+            else:
+                if chat_id:
+                    await bot_or_msg.send_message(chat_id=chat_id, text=part, parse_mode=ParseMode.MARKDOWN_V2)
+                else:
+                    await bot_or_msg.reply_text(part, parse_mode=ParseMode.MARKDOWN_V2)
+        except Exception:
+            if chat_id:
+                await bot_or_msg.send_message(chat_id=chat_id, text=part)
+            else:
+                await bot_or_msg.reply_text(part)
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -224,11 +217,14 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_brief(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     country = " ".join(ctx.args) if ctx.args else COUNTRY
-    msg = await update.message.reply_text("جاري تحضير البريفينج الشامل... قد يأخذ 2-3 دقائق")
+    msg = await update.message.reply_text("جاري تحضير البريفينج الشامل... 2-3 دقائق")
     try:
         data = generate_brief(country)
         text = format_brief(data, country)
-        await msg.edit_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+        parts = split_messages(text)
+        await msg.edit_text(parts[0], parse_mode=ParseMode.MARKDOWN_V2)
+        for part in parts[1:]:
+            await update.message.reply_text(part, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception as e:
         log.error("Brief error: " + str(e))
         await msg.edit_text("خطأ: " + str(e))
@@ -238,8 +234,10 @@ async def send_daily_brief(bot: Bot):
     try:
         data = generate_brief(COUNTRY)
         text = format_brief(data, COUNTRY)
-        await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-        log.info("Daily brief sent.")
+        parts = split_messages(text)
+        for part in parts:
+            await bot.send_message(chat_id=GROUP_CHAT_ID, text=part, parse_mode=ParseMode.MARKDOWN_V2)
+        log.info("Daily brief sent in " + str(len(parts)) + " parts.")
     except Exception as e:
         log.error("Failed: " + str(e))
         await bot.send_message(chat_id=GROUP_CHAT_ID, text="فشل ارسال البريفينج: " + str(e))
