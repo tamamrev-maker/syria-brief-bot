@@ -7,8 +7,9 @@ import os
 import json
 import asyncio
 import logging
-from datetime import datetime, time
+from datetime import datetime
 import pytz
+import re
 
 import anthropic
 from telegram import Update, Bot
@@ -17,25 +18,19 @@ from telegram.constants import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ─── CONFIG ───
-TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
-ANTHROPIC_KEY    = os.environ["ANTHROPIC_KEY"]
-GROUP_CHAT_ID    = int(os.environ["GROUP_CHAT_ID"])   # معرف القناة أو المجموعة
-SEND_HOUR        = int(os.environ.get("SEND_HOUR", "7"))   # ساعة الإرسال (صباحاً)
-SEND_MINUTE      = int(os.environ.get("SEND_MINUTE", "0"))
-TIMEZONE         = os.environ.get("TIMEZONE", "Asia/Damascus")
-COUNTRY          = os.environ.get("COUNTRY", "سوريا")
+TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+ANTHROPIC_KEY  = os.environ["ANTHROPIC_KEY"]
+GROUP_CHAT_ID  = int(os.environ["GROUP_CHAT_ID"])
+SEND_HOUR      = int(os.environ.get("SEND_HOUR", "7"))
+SEND_MINUTE    = int(os.environ.get("SEND_MINUTE", "0"))
+TIMEZONE       = os.environ.get("TIMEZONE", "Asia/Damascus")
+COUNTRY        = os.environ.get("COUNTRY", "سوريا")
 
-# ─── LOGGING ───
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# ─── ANTHROPIC ───
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
-
-# ════════════════════════════════════════════
-# GENERATE BRIEF
-# ════════════════════════════════════════════
 
 def generate_brief(country: str = None) -> dict:
     country = country or COUNTRY
@@ -52,7 +47,7 @@ def generate_brief(country: str = None) -> dict:
   "items": [
     {{
       "title": "عنوان الموضوع",
-      "type": "خبر|تحليل|تسليط_ضوء|ترند",
+      "type": "خبر",
       "summary": "ملخص الموضوع في 2-3 جمل",
       "angle": "الزاوية التحريرية المقترحة",
       "timeAgo": "منذ X ساعات"
@@ -64,157 +59,131 @@ def generate_brief(country: str = None) -> dict:
 ركّز على: السياسة، الوضع الإنساني، العلاقات الإقليمية، الاقتصاد، المجتمع. 5-7 مواضيع متنوعة."""
 
     response = client.messages.create(
-        model="claude-opus-4-5",
+        model="claude-sonnet-4-20250514",
         max_tokens=2000,
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{"role": "user", "content": prompt}]
     )
 
-    raw = "".join(b.text for b in response.content if hasattr(b, "text"))
-    import re
+    texts = [b.text for b in response.content if hasattr(b, "text") and b.text]
+    raw = "".join(texts)
     match = re.search(r'\{[\s\S]*\}', raw)
     if not match:
         raise ValueError("لم يُعد الذكاء الاصطناعي بيانات صالحة")
     return json.loads(match.group())
 
 
-# ════════════════════════════════════════════
-# FORMAT MESSAGE
-# ════════════════════════════════════════════
-
 TYPE_EMOJI = {
-    "خبر":          "📰",
-    "تحليل":        "🔍",
-    "تسليط_ضوء":   "💡",
-    "ترند":         "🔥",
+    "خبر": "📰",
+    "تحليل": "🔍",
+    "تسليط_ضوء": "💡",
+    "ترند": "🔥",
 }
+
+
+def escape_md(text: str) -> str:
+    special = r'_*[]()~`>#+-=|{}.!'
+    return "".join(f"\\{c}" if c in special else c for c in str(text or ""))
+
 
 def format_brief(data: dict, country: str = None) -> str:
     country = country or COUNTRY
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
-    date_str = now.strftime("%A %d %B %Y — %H:%M")
+    date_str = now.strftime("%A %d %B %Y")
 
     lines = [
-        f"📋 *البريفينج التحريري اليومي*",
-        f"🌍 {country} | {date_str}",
-        "─" * 32,
+        "📋 *البريفينج التحريري اليومي*",
+        f"🌍 {escape_md(country)} | {escape_md(date_str)}",
+        "─────────────────────────────────",
         "",
-        f"*المشهد العام:*",
-        f"_{data.get('summary', '')}_ ",
+        "*المشهد العام:*",
+        f"_{escape_md(data.get('summary', ''))}_",
         "",
-        "─" * 32,
+        "─────────────────────────────────",
     ]
 
     for i, item in enumerate(data.get("items", []), 1):
-        emoji = TYPE_EMOJI.get(item.get("type", ""), "📌")
-        tag   = item.get("type", "").replace("_", " ")
+        t = item.get("type", "خبر")
+        emoji = TYPE_EMOJI.get(t, "📌")
         lines += [
             "",
-            f"{emoji} *{i}\\. {escape_md(item.get('title',''))}*  `{tag}`",
-            f"{escape_md(item.get('summary',''))}",
-            f"↳ ✦ _{escape_md(item.get('angle',''))}_",
-            f"⏱ {escape_md(item.get('timeAgo',''))}",
+            f"{emoji} *{i}\\. {escape_md(item.get('title',''))}*",
+            escape_md(item.get('summary', '')),
+            f"↳ ✦ _{escape_md(item.get('angle', ''))}_",
+            f"⏱ {escape_md(item.get('timeAgo', ''))}",
         ]
 
     trends = data.get("trends", [])
     if trends:
         lines += [
             "",
-            "─" * 32,
+            "─────────────────────────────────",
             "",
             "*ترندات اليوم:*",
-            "  ".join(f"`{t}`" for t in trends),
+            " \\| ".join(escape_md(t) for t in trends),
         ]
 
     lines += [
         "",
-        "─" * 32,
-        "🤖 _مُولَّد بالذكاء الاصطناعي — للمراجعة البشرية_",
+        "─────────────────────────────────",
+        "🤖 _مُولَّد بالذكاء الاصطناعي_",
     ]
 
     return "\n".join(lines)
 
 
-def escape_md(text: str) -> str:
-    """Escape special chars for Telegram MarkdownV2"""
-    special = r'_*[]()~`>#+-=|{}.!'
-    return "".join(f"\\{c}" if c in special else c for c in str(text))
-
-
-# ════════════════════════════════════════════
-# TELEGRAM HANDLERS
-# ════════════════════════════════════════════
-
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 أهلاً! أنا بوت البريفينج التحريري.\n\n"
-        "الأوامر المتاحة:\n"
-        "/brief — اطلب بريفينج سوريا الآن\n"
+        "الأوامر:\n"
+        "/brief — بريفينج سوريا الآن\n"
         "/brief لبنان — بريفينج لبلد آخر\n"
         "/help — مساعدة"
     )
 
+
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📋 *البريفينج التحريري اليومي*\n\n"
+        "📋 البريفينج التحريري اليومي\n\n"
         "الأوامر:\n"
-        "`/brief` — بريفينج سوريا\n"
-        "`/brief لبنان` — بريفينج لبلد معين\n"
-        "`/start` — بدء التشغيل\n\n"
-        "يُرسَل البريفينج تلقائياً كل صباح للقناة.",
-        parse_mode=ParseMode.MARKDOWN
+        "/brief — بريفينج سوريا\n"
+        "/brief لبنان — بريفينج لبلد معين\n"
+        "/start — بدء التشغيل\n\n"
+        "يُرسَل البريفينج تلقائياً كل صباح."
     )
+
 
 async def cmd_brief(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     country = " ".join(ctx.args) if ctx.args else COUNTRY
     msg = await update.message.reply_text(f"⏳ جاري إعداد بريفينج {country}...")
-
     try:
         data = generate_brief(country)
         text = format_brief(data, country)
         await msg.edit_text(text, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception as e:
         log.error(f"Brief error: {e}")
-        await msg.edit_text(f"⚠️ خطأ أثناء التوليد: {e}")
+        await msg.edit_text(f"⚠️ خطأ: {e}")
 
-
-# ════════════════════════════════════════════
-# SCHEDULED JOB
-# ════════════════════════════════════════════
 
 async def send_daily_brief(bot: Bot):
     log.info(f"Sending daily brief for {COUNTRY}...")
     try:
         data = generate_brief(COUNTRY)
         text = format_brief(data, COUNTRY)
-        await bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            text=text,
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
-        log.info("Daily brief sent successfully.")
+        await bot.send_message(chat_id=GROUP_CHAT_ID, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+        log.info("Daily brief sent.")
     except Exception as e:
-        log.error(f"Failed to send daily brief: {e}")
-        await bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            text=f"⚠️ فشل إرسال البريفينج اليومي: {e}"
-        )
+        log.error(f"Failed: {e}")
+        await bot.send_message(chat_id=GROUP_CHAT_ID, text=f"⚠️ فشل إرسال البريفينج: {e}")
 
-
-# ════════════════════════════════════════════
-# MAIN
-# ════════════════════════════════════════════
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    # Handlers
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("help",  cmd_help))
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("brief", cmd_brief))
 
-    # Scheduler
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(
         lambda: asyncio.ensure_future(send_daily_brief(app.bot)),
@@ -223,9 +192,8 @@ def main():
         minute=SEND_MINUTE,
     )
     scheduler.start()
-    log.info(f"Scheduler set: daily at {SEND_HOUR:02d}:{SEND_MINUTE:02d} {TIMEZONE}")
-
-    log.info("Bot is running...")
+    log.info(f"Scheduler: daily at {SEND_HOUR:02d}:{SEND_MINUTE:02d} {TIMEZONE}")
+    log.info("Bot running...")
     app.run_polling(drop_pending_updates=True)
 
 
