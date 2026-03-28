@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import logging
+import time
 from datetime import datetime
 import pytz
 import re
@@ -49,30 +50,34 @@ def generate_brief(country=None):
     day_month = now.strftime("%B %d")
 
     prompt = (
-        "Arabic editorial director. Today: " + today_str + " " + time_str + " Damascus.\n"
-        "Search news about " + country + " from last 12 hours covering:\n"
-        "1. Security, politics, government\n"
-        "2. All 14 governorates: " + GOVS + "\n"
-        "3. Communities: مسيحيون,اكراد,دروز,ازيديون,علويون,تركمان\n"
-        "4. Economy, social trends on Twitter/Facebook\n"
-        "5. Historical events on " + day_month + " (before 2011 and revolution 2011-2024)\n\n"
-        "Return ONLY JSON, no citations, plain Arabic text:\n"
-        '{"summary":"overview","items":[{"title":"t","summary":"s","angle":"a","publishedAt":"time","source":"src","governorate":"g","carousel":"c","video":"v","thread":"th"}],"trends":[{"text":"t","platform":"Twitter/Facebook/news","reason":"r"}],"on_this_day":[{"year":"y","event":"e","era":"pre2011/revolution"}]}\n'
-        "8-10 items, 5 trends, 5 on_this_day. Short strings, no newlines in values."
+        "Arabic editor. " + today_str + " " + time_str + " Damascus.\n"
+        "Search " + country + " news last 12h: security, politics, all 14 govs (" + GOVS + "), minorities, economy, social trends, history on " + day_month + ".\n"
+        'JSON only: {"summary":"s","items":[{"title":"t","summary":"s","angle":"a","publishedAt":"p","source":"src","governorate":"g","carousel":"c","video":"v","thread":"th"}],"trends":[{"text":"t","platform":"p","reason":"r"}],"on_this_day":[{"year":"y","event":"e","era":"pre2011/revolution"}]}\n'
+        "6 items, 5 trends, 4 on_this_day. Short Arabic strings, no newlines."
     )
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4000,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    raw = ""
-    for block in response.content:
-        if hasattr(block, "text") and isinstance(block.text, str):
-            raw += block.text
-    return safe_parse(raw)
+    last_err = None
+    for attempt in range(3):
+        try:
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=3000,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = ""
+            for block in response.content:
+                if hasattr(block, "text") and isinstance(block.text, str):
+                    raw += block.text
+            return safe_parse(raw)
+        except anthropic.RateLimitError as e:
+            last_err = e
+            wait = 30 * (attempt + 1)
+            log.warning(f"Rate limit hit, waiting {wait}s...")
+            time.sleep(wait)
+        except Exception as e:
+            raise e
+    raise last_err
 
 def esc(text):
     if not text:
@@ -109,18 +114,14 @@ def format_brief(data, country=None):
     ]
 
     for i, item in enumerate(data.get("items", []), 1):
-        gov = item.get("governorate", "")
-        published = item.get("publishedAt", "")
-        source = item.get("source", "")
         meta_parts = []
-        if gov: meta_parts.append("📍" + esc(gov))
-        if published: meta_parts.append(esc(published))
-        if source: meta_parts.append(esc(source))
-        meta = " \\| ".join(meta_parts)
+        if item.get("governorate"): meta_parts.append("📍" + esc(item["governorate"]))
+        if item.get("publishedAt"): meta_parts.append(esc(item["publishedAt"]))
+        if item.get("source"): meta_parts.append(esc(item["source"]))
 
         lines += ["", "📰 *" + str(i) + "\\. " + esc(item.get("title", "")) + "*"]
-        if meta:
-            lines.append("_" + meta + "_")
+        if meta_parts:
+            lines.append("_" + " \\| ".join(meta_parts) + "_")
         lines += [
             esc(item.get("summary", "")),
             "↳ _" + esc(item.get("angle", "")) + "_",
@@ -137,8 +138,6 @@ def format_brief(data, country=None):
             if isinstance(t, dict):
                 icon = icons.get(t.get("platform", ""), "🔥")
                 lines.append(icon + " *" + esc(t.get("text", "")) + "* — " + esc(t.get("reason", "")))
-            else:
-                lines.append("🔥 " + esc(str(t)))
 
     on_this_day = data.get("on_this_day", [])
     pre = [e for e in on_this_day if isinstance(e, dict) and e.get("era") == "pre2011"]
@@ -163,7 +162,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_brief(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     country = " ".join(ctx.args) if ctx.args else COUNTRY
-    msg = await update.message.reply_text("جاري تحضير البريفينج... 2-3 دقائق")
+    msg = await update.message.reply_text("جاري تحضير البريفينج...")
     try:
         data = generate_brief(country)
         text = format_brief(data, country)
