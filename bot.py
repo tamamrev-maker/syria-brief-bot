@@ -1,4 +1,3 @@
-"""
 البريفينج التحريري اليومي — Telegram Bot
 يشتغل على Railway مجاناً
 """
@@ -17,7 +16,6 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.constants import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# ─── CONFIG ───
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 ANTHROPIC_KEY  = os.environ["ANTHROPIC_KEY"]
 GROUP_CHAT_ID  = int(os.environ["GROUP_CHAT_ID"])
@@ -32,31 +30,28 @@ log = logging.getLogger(__name__)
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 
-def generate_brief(country: str = None) -> dict:
+def generate_brief(country=None):
     country = country or COUNTRY
     today = datetime.now(pytz.timezone(TIMEZONE)).strftime("%A %d %B %Y")
 
-    prompt = f"""أنت محرر صحفي متخصص في شؤون المنطقة العربية. مهمتك توليد بريفينج تحريري يومي عن {country}.
-
-ابحث عن أهم أخبار {country} في آخر 12 ساعة من تاريخ اليوم: {today}.
-
-قدّم ردك حصراً بصيغة JSON بدون أي نص إضافي أو backticks:
-
-{{
-  "summary": "ملخص تحريري من 2-3 جمل عن المشهد اليوم",
-  "items": [
-    {{
-      "title": "عنوان الموضوع",
-      "type": "خبر",
-      "summary": "ملخص الموضوع في 2-3 جمل",
-      "angle": "الزاوية التحريرية المقترحة",
-      "timeAgo": "منذ X ساعات"
-    }}
-  ],
-  "trends": ["ترند 1", "ترند 2", "ترند 3", "ترند 4", "ترند 5"]
-}}
-
-ركّز على: السياسة، الوضع الإنساني، العلاقات الإقليمية، الاقتصاد، المجتمع. 5-7 مواضيع متنوعة."""
+    prompt = (
+        f"أنت محرر صحفي. أعطني بريفينج تحريري عن {country} ليوم {today}.\n\n"
+        "أعد ردك كـ JSON فقط بهذا الشكل بالضبط، بدون أي نص قبله أو بعده:\n\n"
+        '{\n'
+        '  "summary": "ملخص عام في جملتين",\n'
+        '  "items": [\n'
+        '    {\n'
+        '      "title": "عنوان الخبر",\n'
+        '      "type": "خبر",\n'
+        '      "summary": "ملخص في جملتين",\n'
+        '      "angle": "زاوية تحريرية مقترحة",\n'
+        '      "timeAgo": "منذ 3 ساعات"\n'
+        '    }\n'
+        '  ],\n'
+        '  "trends": ["ترند 1", "ترند 2", "ترند 3", "ترند 4", "ترند 5"]\n'
+        '}\n\n'
+        "أضف 5 أخبار مختلفة في items. استخدم علامات اقتباس مزدوجة فقط."
+    )
 
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
@@ -65,42 +60,41 @@ def generate_brief(country: str = None) -> dict:
         messages=[{"role": "user", "content": prompt}]
     )
 
-    texts = [b.text for b in response.content if hasattr(b, "text") and b.text]
-    raw = "".join(texts)
+    raw = ""
+    for block in response.content:
+        if hasattr(block, "text") and isinstance(block.text, str):
+            raw += block.text
+
     match = re.search(r'\{[\s\S]*\}', raw)
     if not match:
-        raise ValueError("لم يُعد الذكاء الاصطناعي بيانات صالحة")
+        raise ValueError("لم يرجع الذكاء الاصطناعي JSON")
+
     return json.loads(match.group())
 
 
-TYPE_EMOJI = {
-    "خبر": "📰",
-    "تحليل": "🔍",
-    "تسليط_ضوء": "💡",
-    "ترند": "🔥",
-}
+TYPE_EMOJI = {"خبر": "📰", "تحليل": "🔍", "تسليط_ضوء": "💡", "ترند": "🔥"}
 
 
-def escape_md(text: str) -> str:
+def esc(text):
+    if not text:
+        return ""
     special = r'_*[]()~`>#+-=|{}.!'
-    return "".join(f"\\{c}" if c in special else c for c in str(text or ""))
+    return "".join(f"\\{c}" if c in special else c for c in str(text))
 
 
-def format_brief(data: dict, country: str = None) -> str:
+def format_brief(data, country=None):
     country = country or COUNTRY
-    tz = pytz.timezone(TIMEZONE)
-    now = datetime.now(tz)
-    date_str = now.strftime("%A %d %B %Y")
+    now = datetime.now(pytz.timezone(TIMEZONE))
+    date_str = now.strftime("%d/%m/%Y %H:%M")
 
     lines = [
         "📋 *البريفينج التحريري اليومي*",
-        f"🌍 {escape_md(country)} | {escape_md(date_str)}",
-        "─────────────────────────────────",
+        f"🌍 {esc(country)} \\| {esc(date_str)}",
         "",
         "*المشهد العام:*",
-        f"_{escape_md(data.get('summary', ''))}_",
+        f"_{esc(data.get('summary', ''))}_",
         "",
-        "─────────────────────────────────",
+        "━━━━━━━━━━━━━━━━━━━━",
     ]
 
     for i, item in enumerate(data.get("items", []), 1):
@@ -108,49 +102,37 @@ def format_brief(data: dict, country: str = None) -> str:
         emoji = TYPE_EMOJI.get(t, "📌")
         lines += [
             "",
-            f"{emoji} *{i}\\. {escape_md(item.get('title',''))}*",
-            escape_md(item.get('summary', '')),
-            f"↳ ✦ _{escape_md(item.get('angle', ''))}_",
-            f"⏱ {escape_md(item.get('timeAgo', ''))}",
+            f"{emoji} *{i}\\. {esc(item.get('title', ''))}*",
+            esc(item.get("summary", "")),
+            f"↳ _{esc(item.get('angle', ''))}_",
+            f"⏱ {esc(item.get('timeAgo', ''))}",
         ]
 
     trends = data.get("trends", [])
     if trends:
         lines += [
             "",
-            "─────────────────────────────────",
-            "",
+            "━━━━━━━━━━━━━━━━━━━━",
             "*ترندات اليوم:*",
-            " \\| ".join(escape_md(t) for t in trends),
+            " \\| ".join(esc(t) for t in trends if t),
         ]
 
-    lines += [
-        "",
-        "─────────────────────────────────",
-        "🤖 _مُولَّد بالذكاء الاصطناعي_",
-    ]
-
+    lines += ["", "━━━━━━━━━━━━━━━━━━━━", "🤖 _مُولَّد بالذكاء الاصطناعي_"]
     return "\n".join(lines)
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 أهلاً! أنا بوت البريفينج التحريري.\n\n"
-        "الأوامر:\n"
-        "/brief — بريفينج سوريا الآن\n"
-        "/brief لبنان — بريفينج لبلد آخر\n"
-        "/help — مساعدة"
+        "الأوامر:\n/brief — بريفينج سوريا الآن\n/brief لبنان — بريفينج لبلد آخر"
     )
 
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📋 البريفينج التحريري اليومي\n\n"
-        "الأوامر:\n"
-        "/brief — بريفينج سوريا\n"
-        "/brief لبنان — بريفينج لبلد معين\n"
-        "/start — بدء التشغيل\n\n"
-        "يُرسَل البريفينج تلقائياً كل صباح."
+        "الأوامر:\n/brief — بريفينج سوريا\n/brief لبنان — بريفينج لبلد معين\n"
+        "يُرسَل تلقائياً كل صباح للمجموعة."
     )
 
 
@@ -163,11 +145,10 @@ async def cmd_brief(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(text, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception as e:
         log.error(f"Brief error: {e}")
-        await msg.edit_text(f"⚠️ خطأ: {e}")
+        await msg.edit_text(f"خطأ: {e}")
 
 
 async def send_daily_brief(bot: Bot):
-    log.info(f"Sending daily brief for {COUNTRY}...")
     try:
         data = generate_brief(COUNTRY)
         text = format_brief(data, COUNTRY)
@@ -175,7 +156,7 @@ async def send_daily_brief(bot: Bot):
         log.info("Daily brief sent.")
     except Exception as e:
         log.error(f"Failed: {e}")
-        await bot.send_message(chat_id=GROUP_CHAT_ID, text=f"⚠️ فشل إرسال البريفينج: {e}")
+        await bot.send_message(chat_id=GROUP_CHAT_ID, text=f"فشل إرسال البريفينج: {e}")
 
 
 def main():
@@ -187,12 +168,9 @@ def main():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(
         lambda: asyncio.ensure_future(send_daily_brief(app.bot)),
-        trigger="cron",
-        hour=SEND_HOUR,
-        minute=SEND_MINUTE,
+        trigger="cron", hour=SEND_HOUR, minute=SEND_MINUTE,
     )
     scheduler.start()
-    log.info(f"Scheduler: daily at {SEND_HOUR:02d}:{SEND_MINUTE:02d} {TIMEZONE}")
     log.info("Bot running...")
     app.run_polling(drop_pending_updates=True)
 
