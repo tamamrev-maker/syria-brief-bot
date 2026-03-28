@@ -224,7 +224,17 @@ async def cmd_brief(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if not text or len(text) < 10:
+    if not text:
+        return
+    is_private = update.message.chat.type == "private"
+    bot_username = ctx.bot.username
+    if not is_private:
+        is_mention = bot_username and ("@" + bot_username) in text
+        is_reply = (update.message.reply_to_message and update.message.reply_to_message.from_user and update.message.reply_to_message.from_user.username == bot_username)
+        if not is_mention and not is_reply:
+            return
+        text = text.replace("@" + bot_username, "").strip()
+    if len(text) < 10:
         return
     msg = await update.message.reply_text("🔍 جاري تحليل الخبر...")
     try:
