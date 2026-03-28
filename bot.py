@@ -28,7 +28,6 @@ client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 def clean_json(text):
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
     text = re.sub(r',\s*([}\]])', r'\1', text)
-    text = re.sub(r'([{,])\s*}', r'\1}', text)
     return text
 
 
@@ -36,12 +35,11 @@ def safe_parse(raw):
     match = re.search(r'\{[\s\S]*\}', raw)
     if not match:
         raise ValueError("No JSON found")
-    json_str = match.group()
+    s = match.group()
     try:
-        return json.loads(json_str)
+        return json.loads(s)
     except Exception:
-        json_str = clean_json(json_str)
-        return json.loads(json_str)
+        return json.loads(clean_json(s))
 
 
 def generate_brief(country=None):
@@ -52,28 +50,75 @@ def generate_brief(country=None):
     day_month = now.strftime("%B %d")
 
     prompt = (
-        "You are an Arabic editorial director. Today is " + today_str + " time " + time_str + " Damascus.\n\n"
-        "TASK 1: Search for " + country + " breaking news from the LAST 12 HOURS ONLY. Skip older news.\n\n"
-        "TASK 2: Search for historical events on " + day_month + " in Syrian history:\n"
-        "- 2 events before 2011\n"
-        "- 3 events from Syrian revolution 2011-2024\n\n"
-        "Respond with ONLY this JSON structure. Use simple Arabic text, no special formatting inside strings:\n"
-        "{\n"
-        "\"summary\": \"overview in Arabic\",\n"
-        "\"items\": [\n"
-        "{\"title\": \"headline\", \"type\": \"news\", \"summary\": \"summary\", \"angle\": \"angle\", \"publishedAt\": \"time\", \"carousel\": \"idea\", \"video\": \"idea\", \"thread\": \"idea\"}\n"
-        "],\n"
-        "\"trends\": [\"t1\", \"t2\", \"t3\", \"t4\", \"t5\"],\n"
-        "\"on_this_day\": [\n"
-        "{\"year\": \"1963\", \"event\": \"event description\", \"era\": \"pre2011\"}\n"
-        "]\n"
-        "}\n"
-        "Include 4-5 items and 5 on_this_day events. No newlines inside string values."
+        "You are an Arabic editorial director specialized in Syrian affairs. "
+        "Today is " + today_str + " at " + time_str + " Damascus time.\n\n"
+
+        "CRITICAL: Return ONLY plain Arabic text in JSON strings. NO citations, NO [1], NO source tags.\n\n"
+
+        "YOU MUST DO MULTIPLE SEPARATE WEB SEARCHES covering ALL these categories:\n\n"
+
+        "1. SECURITY & MILITARY: Search 'سوريا امن اليوم', 'Syria security today', "
+        "'اشتباكات سوريا', 'مظاهرات سوريا اليوم', 'احتجاجات سوريا', 'Syria military news'\n\n"
+
+        "2. POLITICS & GOVERNMENT: Search 'الحكومة السورية اليوم', 'Syria government news', "
+        "'وزارات سوريا', 'Syria diplomacy today', 'سوريا قرارات رسمية'\n\n"
+
+        "3. ALL 14 SYRIAN GOVERNORATES - search each one separately:\n"
+        "   - 'دمشق اليوم' and 'Damascus today'\n"
+        "   - 'ريف دمشق اليوم'\n"
+        "   - 'حلب اليوم' and 'Aleppo today'\n"
+        "   - 'حمص اليوم' and 'Homs today'\n"
+        "   - 'حماه اليوم' and 'Hama today'\n"
+        "   - 'اللاذقية اليوم' and 'Latakia today'\n"
+        "   - 'طرطوس اليوم' and 'Tartus today'\n"
+        "   - 'إدلب اليوم' and 'Idlib today'\n"
+        "   - 'درعا اليوم' and 'Daraa today'\n"
+        "   - 'السويداء اليوم' and 'Sweida today'\n"
+        "   - 'القنيطرة اليوم' and 'Quneitra today'\n"
+        "   - 'دير الزور اليوم' and 'Deir ez-Zor today'\n"
+        "   - 'الرقة اليوم' and 'Raqqa today'\n"
+        "   - 'الحسكة اليوم' and 'Hasakah today'\n\n"
+
+        "4. COMMUNITIES & MINORITIES: Search 'مسيحيو سوريا اليوم', 'اكراد سوريا', "
+        "'دروز سوريا', 'ازيديون سوريا', 'علويون سوريا', 'اسماعيليون سوريا', "
+        "'تركمان سوريا', 'Syria minorities news today'\n\n"
+
+        "5. ECONOMY: Search 'اقتصاد سوريا اليوم', 'سعر الدولار سوريا', "
+        "'اسعار سوريا', 'Syria economy today'\n\n"
+
+        "6. SOCIAL TRENDS: Search what Syrians discuss on Twitter/X in Arabic today, "
+        "Syrian Facebook groups latest, Syrian news sites trending\n\n"
+
+        "7. ON THIS DAY (" + day_month + "): Search Syrian history on this date "
+        "before 2011 AND from Syrian revolution 2011-2024\n\n"
+
+        "After ALL searches compile into this JSON only:\n"
+        '{"summary":"2 sentence Arabic overview",'
+        '"items":['
+        '{"title":"Arabic headline","type":"news","summary":"2 sentence summary","angle":"editorial angle",'
+        '"publishedAt":"HH:MM or X hours ago","source":"site name","governorate":"اسم المحافظة or national",'
+        '"carousel":"carousel idea","video":"video idea","thread":"thread idea"}'
+        '],'
+        '"trends":['
+        '{"text":"trend","platform":"Twitter or Facebook or news","reason":"why trending"}'
+        '],'
+        '"on_this_day":['
+        '{"year":"1963","event":"Arabic description","era":"pre2011 or revolution"}'
+        ']}\n\n'
+        "IMPORTANT:\n"
+        "- Include 8-12 news items covering as many governorates and topics as possible\n"
+        "- Each item must have a governorate field\n"
+        "- Do NOT skip any event even if local or small\n"
+        "- Include 6-8 trends\n"
+        "- Include 6-8 on_this_day events\n"
+        "- Only news from last 12 hours\n"
+        "- Write ALL Arabic in Arabic script\n"
+        "- Use double quotes only, no newlines inside strings"
     )
 
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=3000,
+        max_tokens=6000,
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{"role": "user", "content": prompt}]
     )
@@ -100,7 +145,7 @@ def format_brief(data, country=None):
 
     lines = [
         "📋 *البريفينج التحريري اليومي*",
-        esc(country) + " " + esc(date_str),
+        esc(country) + " \\| " + esc(date_str),
         "",
         "*المشهد العام:*",
         "_" + esc(data.get("summary", "")) + "_",
@@ -110,10 +155,20 @@ def format_brief(data, country=None):
 
     for i, item in enumerate(data.get("items", []), 1):
         published = item.get("publishedAt", "")
-        time_tag = " _\\(" + esc(published) + "\\)_" if published else ""
+        source = item.get("source", "")
+        gov = item.get("governorate", "")
+        meta = ""
+        if gov:
+            meta += " 📍" + esc(gov)
+        if published:
+            meta += " _\\(" + esc(published) + "\\)_"
+        if source:
+            meta += " \\| _" + esc(source) + "_"
+
         lines += [
             "",
-            "📰 *" + str(i) + "\\. " + esc(item.get("title", "")) + "*" + time_tag,
+            "📰 *" + str(i) + "\\. " + esc(item.get("title", "")) + "*",
+            meta,
             esc(item.get("summary", "")),
             "↳ _" + esc(item.get("angle", "")) + "_",
             "",
@@ -125,33 +180,37 @@ def format_brief(data, country=None):
 
     trends = data.get("trends", [])
     if trends:
-        lines += [
-            "",
-            "━━━━━━━━━━━━━━━━━━━━",
-            "*ترندات اليوم:*",
-            " • ".join(esc(t) for t in trends if t),
-        ]
+        lines += ["", "━━━━━━━━━━━━━━━━━━━━", "*ترندات اليوم:*", ""]
+        icons = {"Twitter": "🐦", "Facebook": "📘", "news": "📰"}
+        for t in trends:
+            if isinstance(t, dict):
+                icon = icons.get(t.get("platform", ""), "🔥")
+                lines.append(icon + " *" + esc(t.get("text", "")) + "* — " + esc(t.get("reason", "")))
+            else:
+                lines.append("🔥 " + esc(str(t)))
 
     on_this_day = data.get("on_this_day", [])
-    pre = [e for e in on_this_day if e.get("era") == "pre2011"]
-    rev = [e for e in on_this_day if e.get("era") == "revolution"]
+    pre = [e for e in on_this_day if isinstance(e, dict) and e.get("era") == "pre2011"]
+    rev = [e for e in on_this_day if isinstance(e, dict) and e.get("era") == "revolution"]
 
     if pre or rev:
         lines += ["", "━━━━━━━━━━━━━━━━━━━━", "*في مثل هذا اليوم:*"]
 
     if pre:
-        lines.append("")
-        lines.append("🏛 *تاريخ سوريا:*")
+        lines += ["", "🏛 *تاريخ سوريا:*"]
         for ev in pre:
-            lines.append("• " + esc(ev.get("year", "")) + " — " + esc(ev.get("event", "")))
+            lines.append("• *" + esc(ev.get("year", "")) + "* — " + esc(ev.get("event", "")))
 
     if rev:
-        lines.append("")
-        lines.append("🔴 *الثورة السورية:*")
+        lines += ["", "🔴 *الثورة السورية \\(2011\\-2024\\):*"]
         for ev in rev:
-            lines.append("• " + esc(ev.get("year", "")) + " — " + esc(ev.get("event", "")))
+            lines.append("• *" + esc(ev.get("year", "")) + "* — " + esc(ev.get("event", "")))
 
-    lines += ["", "━━━━━━━━━━━━━━━━━━━━", "🤖 _اخبار اخر 12 ساعة فقط_"]
+    lines += [
+        "",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "🤖 _بحث شامل 14 محافظة \\| اخبار اخر 12 ساعة_"
+    ]
     return "\n".join(lines)
 
 
@@ -165,7 +224,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_brief(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     country = " ".join(ctx.args) if ctx.args else COUNTRY
-    msg = await update.message.reply_text("جاري تحضير البريفينج...")
+    msg = await update.message.reply_text("جاري تحضير البريفينج الشامل... قد يأخذ 2-3 دقائق")
     try:
         data = generate_brief(country)
         text = format_brief(data, country)
