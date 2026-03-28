@@ -9,7 +9,7 @@ import re
 
 import anthropic
 from telegram import Update, Bot
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from telegram.constants import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -42,6 +42,27 @@ def safe_parse(raw):
     except Exception:
         return json.loads(clean_json(s))
 
+def call_api(prompt, max_tokens=2000, use_search=False):
+    tools = [{"type": "web_search_20250305", "name": "web_search"}] if use_search else []
+    last_err = None
+    for attempt in range(3):
+        try:
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=max_tokens,
+                tools=tools if tools else None,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return "".join(b.text for b in response.content if hasattr(b, "text") and b.text)
+        except anthropic.RateLimitError as e:
+            last_err = e
+            wait = 30 * (attempt + 1)
+            log.warning(f"Rate limit, waiting {wait}s...")
+            time.sleep(wait)
+        except Exception as e:
+            raise e
+    raise last_err
+
 def generate_brief(country=None):
     country = country or COUNTRY
     now = datetime.now(pytz.timezone(TIMEZONE))
@@ -51,33 +72,28 @@ def generate_brief(country=None):
 
     prompt = (
         "Arabic editor. " + today_str + " " + time_str + " Damascus.\n"
-        "Search " + country + " news last 12h: security, politics, all 14 govs (" + GOVS + "), minorities, economy, social trends, history on " + day_month + ".\n"
+        "Search " + country + " news last 12h: security, politics, govs (" + GOVS + "), minorities, economy. Also find history on " + day_month + ".\n"
         'JSON only: {"summary":"s","items":[{"title":"t","summary":"s","angle":"a","publishedAt":"p","source":"src","governorate":"g","carousel":"c","video":"v","thread":"th"}],"trends":[{"text":"t","platform":"p","reason":"r"}],"on_this_day":[{"year":"y","event":"e","era":"pre2011/revolution"}]}\n'
-        "6 items, 5 trends, 4 on_this_day. Short Arabic strings, no newlines."
+        "6 items, 4 trends, 4 on_this_day. Short Arabic, no newlines in values."
     )
+    raw = call_api(prompt, max_tokens=3000, use_search=True)
+    return safe_parse(raw)
 
-    last_err = None
-    for attempt in range(3):
-        try:
-            response = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=3000,
-                tools=[{"type": "web_search_20250305", "name": "web_search"}],
-                messages=[{"role": "user", "content": prompt}]
-            )
-            raw = ""
-            for block in response.content:
-                if hasattr(block, "text") and isinstance(block.text, str):
-                    raw += block.text
-            return safe_parse(raw)
-        except anthropic.RateLimitError as e:
-            last_err = e
-            wait = 30 * (attempt + 1)
-            log.warning(f"Rate limit hit, waiting {wait}s...")
-            time.sleep(wait)
-        except Exception as e:
-            raise e
-    raise last_err
+def analyze_news(text):
+    prompt = (
+        "أنت مدير تحريري متخصص في الشأن السوري.\n"
+        "حلل هذا الخبر أو النص وأعطني:\n"
+        "1. ملخص تحريري\n"
+        "2. الزاوية الأهم للتغطية\n"
+        "3. السياق والخلفية\n"
+        "4. أفكار محتوى:\n"
+        "   - كاروسيل انستغرام\n"
+        "   - فيديو قصير\n"
+        "   - ثريد تويتر\n"
+        "5. أسئلة يجب البحث عنها\n\n"
+        "الخبر:\n" + text
+    )
+    return call_api(prompt, max_tokens=1500, use_search=False)
 
 def esc(text):
     if not text:
@@ -158,11 +174,17 @@ def format_brief(data, country=None):
     return "\n".join(lines)
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("البريفينج التحريري\n/brief - سوريا\n/brief لبنان - لبلد آخر")
+    await update.message.reply_text(
+        "👋 البريفينج التحريري السوري\n\n"
+        "الأوامر:\n"
+        "/brief — بريفينج سوريا الصباحي\n"
+        "/brief لبنان — بريفينج لبلد آخر\n\n"
+        "💡 أو أرسل أي خبر أو نص مباشرة وسأحلله لك فوراً"
+    )
 
 async def cmd_brief(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     country = " ".join(ctx.args) if ctx.args else COUNTRY
-    msg = await update.message.reply_text("جاري تحضير البريفينج...")
+    msg = await update.message.reply_text("⏳ جاري تحضير البريفينج...")
     try:
         data = generate_brief(country)
         text = format_brief(data, country)
@@ -173,6 +195,21 @@ async def cmd_brief(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         log.error("Brief error: " + str(e))
         await msg.edit_text("خطأ: " + str(e))
+
+async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if not text or len(text) < 10:
+        return
+    msg = await update.message.reply_text("🔍 جاري تحليل الخبر...")
+    try:
+        analysis = analyze_news(text)
+        parts = split_messages(analysis)
+        await msg.edit_text(parts[0])
+        for part in parts[1:]:
+            await update.message.reply_text(part)
+    except Exception as e:
+        log.error("Analysis error: " + str(e))
+        await msg.edit_text("خطأ في التحليل: " + str(e))
 
 async def send_daily_brief(bot: Bot):
     try:
@@ -189,6 +226,7 @@ def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("brief", cmd_brief))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(
         lambda: asyncio.ensure_future(send_daily_brief(app.bot)),
