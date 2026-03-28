@@ -114,7 +114,7 @@ def format_brief(data, country=None):
             "",
             "━━━━━━━━━━━━━━━━━━━━",
             "*ترندات اليوم:*",
-            " \\| ".join(esc(t) for t in trends if t),
+            " • ".join(esc(t) for t in trends if t),
         ]
 
     lines += ["", "━━━━━━━━━━━━━━━━━━━━", "🤖 _مُولَّد بالذكاء الاصطناعي_"]
