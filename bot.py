@@ -29,38 +29,41 @@ def generate_brief(country=None):
     country = country or COUNTRY
     now = datetime.now(pytz.timezone(TIMEZONE))
     today_str = now.strftime("%Y-%m-%d")
+    time_str = now.strftime("%H:%M")
     day_month = now.strftime("%B %d")
 
     prompt = (
-        "You are an Arabic editorial director specialized in Syrian affairs. "
-        "Today is " + today_str + ". "
-        "Search for the latest news about " + country + " from the LAST 12 HOURS ONLY. "
-        "Do NOT include any news older than 12 hours. "
-        "Also search for historical events on this day (" + day_month + ") in Syrian history, "
-        "especially events from the Syrian revolution (March 15, 2011 to December 8, 2024). "
-        "Return ONLY valid JSON with no extra text:\n"
+        "You are an Arabic editorial director. Today is " + today_str + " and the current time is " + time_str + " Damascus time.\n\n"
+        "TASK 1 - BREAKING NEWS: Search the web RIGHT NOW for " + country + " news published in the last 12 hours only (after " + today_str + " minus 12 hours). "
+        "If you find news older than 12 hours, DO NOT include it. Mark each item with exact publish time if available. "
+        "Prioritize: breaking news, official statements, military developments, economic news.\n\n"
+        "TASK 2 - ON THIS DAY: Search for historical events on " + day_month + " in Syrian history:\n"
+        "- At least 2 events from Syrian history before 2011 (political, cultural, military milestones)\n"
+        "- At least 3 events from the Syrian revolution period (March 15 2011 to December 8 2024): battles, protests, political decisions, humanitarian milestones\n\n"
+        "Return ONLY valid JSON:\n"
         "{\n"
-        "  \"summary\": \"2-sentence overview of today's Syrian news\",\n"
+        "  \"summary\": \"2-sentence Arabic overview of today breaking news\",\n"
         "  \"items\": [\n"
         "    {\n"
-        "      \"title\": \"news headline in Arabic\",\n"
+        "      \"title\": \"Arabic headline\",\n"
         "      \"type\": \"news\",\n"
         "      \"summary\": \"2-sentence Arabic summary\",\n"
         "      \"angle\": \"editorial angle in Arabic\",\n"
+        "      \"publishedAt\": \"e.g. today 14:30 or 3 hours ago\",\n"
         "      \"content_ideas\": {\n"
-        "        \"carousel\": \"idea for Instagram carousel post\",\n"
-        "        \"video\": \"idea for short video\",\n"
-        "        \"thread\": \"idea for Twitter/X thread\"\n"
+        "        \"carousel\": \"carousel post idea in Arabic\",\n"
+        "        \"video\": \"short video idea in Arabic\",\n"
+        "        \"thread\": \"Twitter thread idea in Arabic\"\n"
         "      }\n"
         "    }\n"
         "  ],\n"
         "  \"trends\": [\"trend1\", \"trend2\", \"trend3\", \"trend4\", \"trend5\"],\n"
-        "  \"on_this_day\": {\n"
-        "    \"historical\": \"a notable historical event that happened on " + day_month + " in Syrian history before 2011\",\n"
-        "    \"revolution\": \"a notable event from the Syrian revolution (2011-2024) that happened on " + day_month + "\"\n"
-        "  }\n"
+        "  \"on_this_day\": [\n"
+        "    {\"year\": \"1963\", \"event\": \"Arabic description of historical event\", \"era\": \"pre2011\"},\n"
+        "    {\"year\": \"2011\", \"event\": \"Arabic description of revolution event\", \"era\": \"revolution\"}\n"
+        "  ]\n"
         "}\n"
-        "Add 4-5 items from the last 12 hours only. Use double quotes. Write all Arabic content in Arabic script."
+        "Include 4-5 items. Use double quotes only. Write Arabic content in Arabic script."
     )
 
     response = client.messages.create(
@@ -104,9 +107,11 @@ def format_brief(data, country=None):
     ]
 
     for i, item in enumerate(data.get("items", []), 1):
+        published = item.get("publishedAt", "")
+        time_tag = " _\\(" + esc(published) + "\\)_" if published else ""
         lines += [
             "",
-            "📰 *" + str(i) + "\\. " + esc(item.get("title", "")) + "*",
+            "📰 *" + str(i) + "\\. " + esc(item.get("title", "")) + "*" + time_tag,
             esc(item.get("summary", "")),
             "↳ _" + esc(item.get("angle", "")) + "_",
         ]
@@ -129,17 +134,23 @@ def format_brief(data, country=None):
             " • ".join(esc(t) for t in trends if t),
         ]
 
-    on_this_day = data.get("on_this_day", {})
+    on_this_day = data.get("on_this_day", [])
     if on_this_day:
         lines += [
             "",
             "━━━━━━━━━━━━━━━━━━━━",
             "*في مثل هذا اليوم:*",
+            "",
+            "🏛 *تاريخ سوريا:*",
         ]
-        if on_this_day.get("historical"):
-            lines.append("🏛 " + esc(on_this_day["historical"]))
-        if on_this_day.get("revolution"):
-            lines.append("🔴 " + esc(on_this_day["revolution"]))
+        for ev in on_this_day:
+            if ev.get("era") == "pre2011":
+                lines.append("• " + esc(ev.get("year", "")) + " — " + esc(ev.get("event", "")))
+
+        lines += ["", "🔴 *الثورة السورية \\(2011\\-2024\\):*"]
+        for ev in on_this_day:
+            if ev.get("era") == "revolution":
+                lines.append("• " + esc(ev.get("year", "")) + " — " + esc(ev.get("event", "")))
 
     lines += ["", "━━━━━━━━━━━━━━━━━━━━", "🤖 _اخبار اخر 12 ساعة فقط_"]
     return "\n".join(lines)
